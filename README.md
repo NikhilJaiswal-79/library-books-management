@@ -1,6 +1,6 @@
 # Library Book Usage Analysis & Circulation System
 
-A modern library circulation management and usage analytics web platform built with **Python**, **FastAPI**, **Pandas**, **NumPy**, **Chart.js**, and a responsive Single-Page Application (SPA).
+A modern library circulation management and usage analytics web platform built with **Python**, **Flask**, **Pandas**, **NumPy**, **Chart.js**, and a responsive Single-Page Application (SPA).
 
 ---
 
@@ -8,8 +8,8 @@ A modern library circulation management and usage analytics web platform built w
 
 | Layer | Technology | Purpose |
 | :--- | :--- | :--- |
-| **Backend Framework** | **FastAPI & Uvicorn** | High-performance asynchronous REST API server |
-| **Language** | **Python 3.10+ / 3.14** | Core backend logic and transactions |
+| **Backend Framework** | **Flask & Gunicorn** | Lightweight WSGI web framework for REST API |
+| **Language** | **Python 3.10+** | Core backend logic and transactions |
 | **Relational Database** | **MySQL Server 8.0+** | Sole database backend; the schema is created automatically on first run |
 | **Database Driver** | **`mysql-connector-python`** | Connects Python to MySQL database |
 | **Configuration** | **`python-dotenv`** | Credentials are loaded from a git-ignored `.env` file |
@@ -72,7 +72,7 @@ Library Book Management/
 ├── operations.py             # Book/borrower CRUD and transaction business rules
 ├── analytics.py              # Pandas grouping, NumPy statistics, and distributions
 ├── seed_data.py              # Realistic sample data generator (books, borrowers, loans)
-├── server.py                 # FastAPI Web Server and REST API router
+├── server.py                 # Flask Web Server and REST API router
 ├── main.py                   # Optional Terminal CLI menu and automated test runner
 ├── requirements.txt          # Python dependencies
 ├── .env.example              # Template for the .env configuration file
@@ -136,8 +136,10 @@ python server.py
 Open your browser and navigate to:
 👉 **`http://127.0.0.1:8000`**
 
-To explore and test the interactive API documentation:
-👉 **`http://127.0.0.1:8000/docs`**
+For production deployment, use Gunicorn:
+```bash
+gunicorn -w 4 -b 127.0.0.1:8000 server:app
+```
 
 ---
 

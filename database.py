@@ -15,6 +15,7 @@ def get_raw_connection():
     The database is created automatically if it does not exist yet.
     Raises ConnectionError with an actionable message if the server is
     unreachable or the credentials are wrong.
+    Returns (connection, backend_name) tuple.
     """
     server_config = {k: v for k, v in MYSQL_CONFIG.items() if k != "database"}
 
@@ -39,7 +40,8 @@ def get_raw_connection():
         ) from e
 
     try:
-        return mysql.connector.connect(**MYSQL_CONFIG)
+        conn = mysql.connector.connect(**MYSQL_CONFIG)
+        return conn, "mysql"
     except mysql.connector.Error as e:
         raise ConnectionError(
             f"Could not open database '{MYSQL_CONFIG['database']}' ({e})."
@@ -52,7 +54,7 @@ class Database:
     @classmethod
     def execute(cls, query: str, params: tuple = None, commit: bool = True):
         """Executes INSERT, UPDATE, DELETE queries and returns lastrowid or rowcount."""
-        conn = get_raw_connection()
+        conn, _ = get_raw_connection()
         cursor = conn.cursor()
         try:
             if params:
@@ -70,7 +72,7 @@ class Database:
     @classmethod
     def fetchall(cls, query: str, params: tuple = None):
         """Fetches all rows as a list of tuples."""
-        conn = get_raw_connection()
+        conn, _ = get_raw_connection()
         cursor = conn.cursor()
         try:
             if params:
@@ -86,7 +88,7 @@ class Database:
     @classmethod
     def fetchone(cls, query: str, params: tuple = None):
         """Fetches a single row as a tuple."""
-        conn = get_raw_connection()
+        conn, _ = get_raw_connection()
         cursor = conn.cursor()
         try:
             if params:
@@ -102,7 +104,7 @@ class Database:
     @classmethod
     def get_dataframe(cls, query: str, params: tuple = None) -> pd.DataFrame:
         """Loads query results directly into a Pandas DataFrame."""
-        conn = get_raw_connection()
+        conn, _ = get_raw_connection()
         try:
             df = pd.read_sql_query(query, conn, params=params)
             return df
@@ -115,7 +117,7 @@ def initialize_database():
     # Ensure charts directory exists
     os.makedirs(CHARTS_DIR, exist_ok=True)
 
-    conn = get_raw_connection()
+    conn, _ = get_raw_connection()
     cursor = conn.cursor()
 
     create_books_table = """

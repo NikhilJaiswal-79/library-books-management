@@ -10,7 +10,7 @@ from config import DEFAULT_LOAN_DAYS
 
 def add_book(isbn: str, title: str, author: str, category: str, copies_available: int = 1) -> tuple[bool, str]:
     """Adds a new book to the library catalogue."""
-    try:
+    try:    
         isbn = isbn.strip()
         title = title.strip()
         author = author.strip()
@@ -114,17 +114,27 @@ def issue_book(book_id: int, borrower_id: int, issue_date_str: str = None, loan_
     due_str = due_date.strftime("%Y-%m-%d")
 
     # 4. Atomic Transaction: Insert loan and decrement copies
-    conn = get_raw_connection()
+    conn, backend = get_raw_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute(
-            "INSERT INTO loans (book_id, borrower_id, issue_date, due_date, return_date) VALUES (%s, %s, %s, %s, NULL)",
-            (book_id, borrower_id, issue_str, due_str)
-        )
-        cursor.execute(
-            "UPDATE books SET copies_available = copies_available - 1 WHERE book_id = %s AND copies_available > 0",
-            (book_id,)
-        )
+        if backend == "sqlite":
+            cursor.execute(
+                "INSERT INTO loans (book_id, borrower_id, issue_date, due_date, return_date) VALUES (?, ?, ?, ?, NULL)",
+                (book_id, borrower_id, issue_str, due_str)
+            )
+            cursor.execute(
+                "UPDATE books SET copies_available = copies_available - 1 WHERE book_id = ? AND copies_available > 0",
+                (book_id,)
+            )
+        else:
+            cursor.execute(
+                "INSERT INTO loans (book_id, borrower_id, issue_date, due_date, return_date) VALUES (%s, %s, %s, %s, NULL)",
+                (book_id, borrower_id, issue_str, due_str)
+            )
+            cursor.execute(
+                "UPDATE books SET copies_available = copies_available - 1 WHERE book_id = %s AND copies_available > 0",
+                (book_id,)
+            )
 
         if cursor.rowcount == 0:
             conn.rollback()
@@ -184,17 +194,27 @@ def return_book(loan_id: int, return_date_str: str = None) -> tuple[bool, str]:
     ret_str = return_date.strftime("%Y-%m-%d")
 
     # 2. Atomic Transaction: Update return_date and increment copies_available
-    conn = get_raw_connection()
+    conn, backend = get_raw_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute(
-            "UPDATE loans SET return_date = %s WHERE loan_id = %s AND return_date IS NULL",
-            (ret_str, loan_id)
-        )
-        cursor.execute(
-            "UPDATE books SET copies_available = copies_available + 1 WHERE book_id = %s",
-            (book_id,)
-        )
+        if backend == "sqlite":
+            cursor.execute(
+                "UPDATE loans SET return_date = ? WHERE loan_id = ? AND return_date IS NULL",
+                (ret_str, loan_id)
+            )
+            cursor.execute(
+                "UPDATE books SET copies_available = copies_available + 1 WHERE book_id = ?",
+                (book_id,)
+            )
+        else:
+            cursor.execute(
+                "UPDATE loans SET return_date = %s WHERE loan_id = %s AND return_date IS NULL",
+                (ret_str, loan_id)
+            )
+            cursor.execute(
+                "UPDATE books SET copies_available = copies_available + 1 WHERE book_id = %s",
+                (book_id,)
+            )
 
         if cursor.rowcount == 0:
             conn.rollback()

@@ -1,16 +1,12 @@
 """
-FastAPI Web Server for Library Book Usage Analysis System.
+Flask Web Server for Library Book Usage Analysis System.
 Exposes REST APIs for Books, Borrowers, Circulation, Analytics, and Visualizations,
 while serving the modern single-page web interface.
 """
 
 import os
 from datetime import date
-from typing import Optional
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, HTMLResponse
-from pydantic import BaseModel
+from flask import Flask, jsonify, request, send_file, send_from_directory
 
 import database
 import operations
@@ -21,86 +17,70 @@ from config import CHARTS_DIR, DEFAULT_LOAN_DAYS
 # Initialize database tables on server startup
 database.initialize_database()
 
-app = FastAPI(
-    title="Library Book Usage Analysis API",
-    description="Circulation and Usage Analytics Web Platform",
-    version="1.0.0"
-)
+# Flask app with static folder configuration
+app = Flask(__name__, static_folder="static", static_url_path="/static")
 
-# Static directory setup
-STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
-os.makedirs(STATIC_DIR, exist_ok=True)
-os.makedirs(os.path.join(STATIC_DIR, "css"), exist_ok=True)
-os.makedirs(os.path.join(STATIC_DIR, "js"), exist_ok=True)
+# Ensure charts directory exists
 os.makedirs(CHARTS_DIR, exist_ok=True)
 
-# Mount static folder
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+# ==================== Helper Functions ====================
+
+def validate_json(required_fields=None):
+    """Validate JSON request body and return parsed data or error response."""
+    if not request.is_json:
+        return None, jsonify({"detail": "Content-Type must be application/json"}), 400
+    data = request.get_json(silent=True)
+    if data is None:
+        return None, jsonify({"detail": "Invalid JSON body"}), 400
+    if required_fields:
+        missing = [f for f in required_fields if f not in data or data[f] in (None, "")]
+        if missing:
+            return None, jsonify({"detail": f"Missing required fields: {', '.join(missing)}"}), 400
+    return data, None, None
 
 
-# ==================== Request Models ====================
-
-class BookCreateRequest(BaseModel):
-    isbn: str
-    title: str
-    author: str
-    category: str
-    copies_available: int = 1
-
-
-class BorrowerCreateRequest(BaseModel):
-    borrower_name: str
-    roll_no: str
-
-
-class IssueBookRequest(BaseModel):
-    book_id: int
-    borrower_id: int
-    issue_date: Optional[str] = None
-    loan_days: Optional[int] = DEFAULT_LOAN_DAYS
-
-
-class ReturnBookRequest(BaseModel):
-    loan_id: int
-    return_date: Optional[str] = None
+def error_response(message, status_code=400):
+    """Standardized error response matching FastAPI's {'detail': ...} format."""
+    return jsonify({"detail": message}), status_code
 
 
 # ==================== Frontend Root ====================
 
-@app.get("/")
+@app.route("/")
 def read_root():
     """Serves the main single-page web application."""
-    index_file = os.path.join(STATIC_DIR, "index.html")
+    index_file = os.path.join(app.static_folder, "index.html")
     if os.path.exists(index_file):
-        return FileResponse(index_file)
-    return HTMLResponse("<h1>Library Book Analysis System</h1><p>Frontend static files loading...</p>")
+        return send_file(index_file)
+    return "<h1>Library Book Analysis System</h1><p>Frontend static files loading...</p>", 200
 
 
 # ==================== REST API Endpoints ====================
 
-@app.get("/api/status")
+@app.route("/api/status")
 def get_system_status():
     """Returns database backend and system health."""
     conn = database.get_raw_connection()
     conn.close()
-    return {
+    return jsonify({
         "status": "online",
         "database_backend": "MYSQL",
         "today": str(date.today()),
         "default_loan_days": DEFAULT_LOAN_DAYS
-    }
+    })
 
 
-@app.get("/api/kpis")
+@app.route("/api/kpis")
 def get_kpis():
     """Returns high-level circulation and stock KPIs."""
     try:
-        return analytics.get_library_kpis()
+        return jsonify(analytics.get_library_kpis())
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return error_response(str(e), 500)
 
 
-@app.get("/api/books")
+@app.route("/api/books", methods=["GET"])
 def list_books():
     """Retrieves all books."""
     raw = operations.get_all_books()
@@ -114,21 +94,26 @@ def list_books():
             "category": r[4],
             "copies_available": r[5]
         })
-    return books
+    return jsonify(books)
 
 
-@app.post("/api/books")
-def create_book(req: BookCreateRequest):
+@app.route("/api/books", methods=["POST"])
+def create_book():
     """Registers a new book in the catalogue."""
+    data, err_resp, err_code = validate_json(["isbn", "title", "author", "category"])
+    if err_resp:
+        return err_resp, err_code
+    
     success, message = operations.add_book(
-        req.isbn, req.title, req.author, req.category, req.copies_available
+        data["isbn"], data["title"], data["author"], data["category"], 
+        data.get("copies_available", 1)
     )
     if not success:
-        raise HTTPException(status_code=400, detail=message)
-    return {"success": True, "message": message}
+        return error_response(message)
+    return jsonify({"success": True, "message": message})
 
 
-@app.get("/api/borrowers")
+@app.route("/api/borrowers", methods=["GET"])
 def list_borrowers():
     """Retrieves all registered borrowers."""
     raw = operations.get_all_borrowers()
@@ -139,148 +124,170 @@ def list_borrowers():
             "borrower_name": r[1],
             "roll_no": r[2]
         })
-    return borrowers
+    return jsonify(borrowers)
 
 
-@app.post("/api/borrowers")
-def create_borrower(req: BorrowerCreateRequest):
+@app.route("/api/borrowers", methods=["POST"])
+def create_borrower():
     """Registers a new borrower."""
-    success, message = operations.add_borrower(req.borrower_name, req.roll_no)
+    data, err_resp, err_code = validate_json(["borrower_name", "roll_no"])
+    if err_resp:
+        return err_resp, err_code
+    
+    success, message = operations.add_borrower(data["borrower_name"], data["roll_no"])
     if not success:
-        raise HTTPException(status_code=400, detail=message)
-    return {"success": True, "message": message}
+        return error_response(message)
+    return jsonify({"success": True, "message": message})
 
 
-@app.get("/api/loans/active")
+@app.route("/api/loans/active")
 def list_active_loans():
     """Retrieves all active unreturned loans with overdue status."""
-    return operations.get_active_loans()
+    return jsonify(operations.get_active_loans())
 
 
-@app.post("/api/loans/issue")
-def issue_book_endpoint(req: IssueBookRequest):
+@app.route("/api/loans/issue", methods=["POST"])
+def issue_book_endpoint():
     """Issues a book to a borrower with validation."""
+    data, err_resp, err_code = validate_json(["book_id", "borrower_id"])
+    if err_resp:
+        return err_resp, err_code
+    
     success, message = operations.issue_book(
-        req.book_id, req.borrower_id, req.issue_date, req.loan_days
+        data["book_id"], data["borrower_id"], 
+        data.get("issue_date"), data.get("loan_days", DEFAULT_LOAN_DAYS)
     )
     if not success:
-        raise HTTPException(status_code=400, detail=message)
-    return {"success": True, "message": message}
+        return error_response(message)
+    return jsonify({"success": True, "message": message})
 
 
-@app.post("/api/loans/return")
-def return_book_endpoint(req: ReturnBookRequest):
+@app.route("/api/loans/return", methods=["POST"])
+def return_book_endpoint():
     """Records the return of an issued book."""
+    data, err_resp, err_code = validate_json(["loan_id"])
+    if err_resp:
+        return err_resp, err_code
+    
     success, message = operations.return_book(
-        req.loan_id, req.return_date
+        data["loan_id"], data.get("return_date")
     )
     if not success:
-        raise HTTPException(status_code=400, detail=message)
-    return {"success": True, "message": message}
+        return error_response(message)
+    return jsonify({"success": True, "message": message})
 
 
 # ==================== Analytics Endpoints ====================
 
-@app.get("/api/analytics/popular")
-def get_popular_books(limit: int = 10):
+@app.route("/api/analytics/popular")
+def get_popular_books():
     """Returns top borrowed books."""
+    limit = request.args.get("limit", 10, type=int)
     df = analytics.get_most_borrowed_books_df(limit=limit)
-    return df.to_dict(orient="records")
+    return jsonify(df.to_dict(orient="records"))
 
 
-@app.get("/api/analytics/overdue")
+@app.route("/api/analytics/overdue")
 def get_overdue_loans():
     """Returns all overdue loans."""
     df = analytics.get_overdue_loans_df()
-    return df.to_dict(orient="records")
+    return jsonify(df.to_dict(orient="records"))
 
 
-@app.get("/api/analytics/categories")
+@app.route("/api/analytics/categories")
 def get_category_summary():
     """Returns category circulation summary."""
     df = analytics.get_category_summary_df()
-    return df.to_dict(orient="records")
+    return jsonify(df.to_dict(orient="records"))
 
 
-@app.get("/api/analytics/trends")
+@app.route("/api/analytics/trends")
 def get_monthly_trends():
     """Returns monthly borrowing trajectory."""
     df = analytics.get_monthly_borrowing_trends_df()
-    return df.to_dict(orient="records")
+    return jsonify(df.to_dict(orient="records"))
 
 
-@app.get("/api/analytics/statistics")
+@app.route("/api/analytics/statistics")
 def get_loan_statistics():
     """Returns loan duration descriptive statistics (NumPy)."""
-    return analytics.calculate_loan_statistics()
+    return jsonify(analytics.calculate_loan_statistics())
 
 
-@app.get("/api/analytics/duration-distribution")
+@app.route("/api/analytics/duration-distribution")
 def get_duration_distribution():
     """Returns binned loan duration frequencies (NumPy)."""
-    return analytics.get_loan_duration_distribution()
+    return jsonify(analytics.get_loan_duration_distribution())
 
 
-@app.get("/api/analytics/top-borrowers")
-def get_top_borrowers(limit: int = 8):
+@app.route("/api/analytics/top-borrowers")
+def get_top_borrowers():
     """Returns most active borrowers."""
+    limit = request.args.get("limit", 8, type=int)
     df = analytics.get_top_borrowers_df(limit=limit)
-    return df.to_dict(orient="records")
+    return jsonify(df.to_dict(orient="records"))
 
 
-@app.get("/api/analytics/inventory-health")
+@app.route("/api/analytics/inventory-health")
 def get_inventory_health():
     """Returns stock vs checkout allocation."""
-    return analytics.get_inventory_health()
+    return jsonify(analytics.get_inventory_health())
 
 
-@app.get("/api/analytics/punctuality")
+@app.route("/api/analytics/punctuality")
 def get_punctuality():
     """Returns return timeliness breakdown."""
-    return analytics.get_return_punctuality()
+    return jsonify(analytics.get_return_punctuality())
 
 
-@app.post("/api/seed")
-def seed_database(reset: bool = True):
+@app.route("/api/seed", methods=["POST"])
+def seed_database():
     """Populates or resets sample data."""
     try:
+        # Check for optional reset parameter
+        reset = True
+        if request.is_json:
+            data = request.get_json(silent=True)
+            if data and "reset" in data:
+                reset = data["reset"]
         seed_data.populate_sample_data(force_reset=reset)
-        return {"success": True, "message": "Sample library data successfully populated."}
+        return jsonify({"success": True, "message": "Sample library data successfully populated."})
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return error_response(str(e), 500)
 
 
-@app.get("/api/charts/generate")
+@app.route("/api/charts/generate")
 def generate_all_charts():
     """Generates and updates Matplotlib charts."""
     try:
         p1 = analytics.plot_popular_books()
         p2 = analytics.plot_monthly_trends()
         p3 = analytics.plot_category_distribution()
-        return {
+        return jsonify({
             "success": True,
             "charts": {
                 "popular_books": "/api/charts/popular_books_chart.png",
                 "monthly_trends": "/api/charts/monthly_borrowing_trends.png",
                 "category_distribution": "/api/charts/category_distribution_chart.png"
             }
-        }
+        })
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return error_response(str(e), 500)
 
 
-@app.get("/api/charts/{chart_name}")
-def get_chart_image(chart_name: str):
+@app.route("/api/charts/<chart_name>")
+def get_chart_image(chart_name):
     """Serves the generated chart images."""
     file_path = os.path.join(CHARTS_DIR, chart_name)
     if os.path.exists(file_path):
-        return FileResponse(file_path, media_type="image/png")
-    raise HTTPException(status_code=404, detail="Chart not found. Call /api/charts/generate first.")
+        return send_file(file_path, mimetype="image/png")
+    return error_response("Chart not found. Call /api/charts/generate first.", 404)
 
+
+# ==================== Main Entry Point ====================
 
 if __name__ == "__main__":
-    import uvicorn
-    print("\nStarting Library Book Usage Analysis Web Server...")
+    print("\nStarting Library Book Usage Analysis Web Server (Flask)...")
     print("Web Interface URL: http://127.0.0.1:8000")
-    print("API Documentation: http://127.0.0.1:8000/docs\n")
-    uvicorn.run("server:app", host="127.0.0.1", port=8000, reload=True)
+    # For production use: gunicorn -w 4 -b 127.0.0.1:8000 server:app
+    app.run(host="127.0.0.1", port=8000, debug=False, use_reloader=False)
